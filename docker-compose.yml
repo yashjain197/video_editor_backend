@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    env_file: .env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    env_file: .env
+    volumes:
+      - ./videos:/app/videos
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["/app/backend/prestart.sh"]
+
+  celery:
+    build:
+      context: .
+      dockerfile: docker/celery.dockerfile
+    env_file: .env
+    volumes:
+      - ./videos:/app/videos
+    depends_on:
+      - redis
+      - db
+    command: ["celery", "-A", "backend.core.celery_app", "worker", "--loglevel=info"]
+
+volumes:
+  postgres_data:
