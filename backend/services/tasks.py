@@ -13,13 +13,58 @@ from backend.crud.overlay import update_overlay_config
 from backend.models.overlay_config import OverlayConfig
 from celery.utils.log import get_task_logger
 from backend.crud.video_version import create_video_version
+import shutil 
 
 logger = get_task_logger(__name__)
 
 @shared_task
-def process_video_upload(video_id: int):
-    # TODO: ffmpeg processing
-    pass
+def process_video_upload(job_id: str, video_id: int, file_path: str):
+    db = SessionLocal()
+    try:
+        job = get_job_by_id(db, job_id)
+        if not job:
+            return
+
+        update_job_status(db, job, JobStatus.processing)
+
+        # Get size
+        size = os.path.getsize(file_path)
+        
+        # Get duration using ffprobe
+        duration_result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT
+        )
+        if duration_result.returncode != 0:
+            raise Exception(f"FFmpeg error: {duration_result.stdout.decode()}")
+        duration = float(duration_result.stdout.decode().strip())
+
+        # Update video entry with metadata
+        video = db.query(Video).filter(Video.id == video_id).first()
+        if not video:
+            raise Exception("Video not found")
+        video.duration = duration
+        video.size = size
+        db.commit()
+        db.refresh(video)
+
+        # Create original video version (copy file to versions dir)
+        versions_dir = "/app/videos/versions"
+        os.makedirs(versions_dir, exist_ok=True)
+        version_filename = f"original_{uuid.uuid4().hex}.mp4"
+        version_path = f"{versions_dir}/{version_filename}"
+        shutil.copy(file_path, version_path)  # Copy to versions for consistency
+
+        create_video_version(db, video_id=video_id, job_id=job_id, version_type="original", filename=version_filename, size=size, duration=duration)
+
+        result_url = f"/videos/versions/{version_filename}"
+        update_job_status(db, job, JobStatus.completed, result_url=result_url)
+    except Exception as e:
+        update_job_status(db, job, JobStatus.failed, error_msg=str(e))
+        print(f"Task error: {str(e)}")
+    finally:
+        db.close()
 
 @shared_task
 def trim_video(job_id: str, video_id: int, start: float, end: float):

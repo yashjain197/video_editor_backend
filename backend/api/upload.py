@@ -2,10 +2,11 @@ from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from sqlalchemy.orm import Session
 import shutil
 import os
-import subprocess
 from backend.core.db import SessionLocal
 from backend.schemas.video import VideoUploadResponse
 from backend.crud.video import create_video
+from backend.crud.job import create_job
+from backend.services.tasks import process_video_upload
 
 router = APIRouter()
 
@@ -16,9 +17,9 @@ def get_db():
     finally:
         db.close()
 
-@router.post("/upload", response_model=VideoUploadResponse)
+@router.post("/upload")
 def upload_video(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    # Save file locally
+    # Save file locally (synchronous to handle large files)
     upload_dir = "/app/videos"
     os.makedirs(upload_dir, exist_ok=True)
     file_path = os.path.join(upload_dir, file.filename)
@@ -26,21 +27,13 @@ def upload_video(file: UploadFile = File(...), db: Session = Depends(get_db)):
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
-    # Get size
-    size = os.path.getsize(file_path)
+    # Create initial video entry (with placeholder metadata)
+    video = create_video(db, filename=file.filename, duration=0.0, size=0)  # Placeholders, updated in task
     
-    # Get duration using ffprobe
-    try:
-        result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT
-        )
-        duration = float(result.stdout.decode().strip())
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error extracting duration: {str(e)}")
+    # Create job
+    job = create_job(db)
     
-    # Store in DB
-    video = create_video(db, filename=file.filename, duration=duration, size=size)
+    # Queue Celery task for metadata extraction and version creation
+    process_video_upload.delay(job.job_id, video.id, file_path)
     
-    return VideoUploadResponse(id=video.id, filename=video.filename, upload_time=video.upload_time)
+    return {"job_id": job.job_id}
