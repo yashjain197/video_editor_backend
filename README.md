@@ -26,3 +26,10 @@ docker compose up --build
 - Use /jobs/{job_id}/status and /result for tracking/download.
 - Supports Hindi text (e.g., "नमस्ते" in text overlay).
 - Overlaid files in ./videos/overlaid.
+
+## Level 5 Implementation (Multiple Output Qualities)
+- Stores "best" (original quality) versions after processing (upload, trim, overlay, watermark) in DB with type (e.g., 'trimmed', 'watermarked').
+- GET /api/v1/versions/{video_id}: List all versions for a video (type, quality, filename, etc.).
+- GET /api/v1/download/{video_id}/{quality}?version_type={type}: Download/transcode to specified quality (1080p, 720p, 480p) from the best/latest version (or specific type if provided). Example: /download/2/720p?version_type=trimmed.
+- Transcoding is on-demand to save storage; streams MP4 directly.
+- Versions stored in ./videos/versions.

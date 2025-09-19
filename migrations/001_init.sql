@@ -34,3 +34,16 @@ CREATE TABLE IF NOT EXISTS overlay_configs (
     output_filename VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+
+CREATE TABLE IF NOT EXISTS video_versions (
+    id SERIAL PRIMARY KEY,
+    video_id INTEGER REFERENCES videos(id) NOT NULL,
+    job_id VARCHAR(36) REFERENCES jobs(job_id),
+    version_type VARCHAR(50) NOT NULL,
+    quality VARCHAR(50) NOT NULL,
+    filename VARCHAR(255) NOT NULL,
+    size INTEGER,
+    duration FLOAT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

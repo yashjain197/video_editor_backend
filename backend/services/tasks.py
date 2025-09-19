@@ -9,14 +9,12 @@ import os
 import uuid
 import json
 import tempfile
-from backend.crud.overlay import create_overlay_config, update_overlay_config
-from backend.crud.job import get_job_by_id, update_job_status
-from backend.models.job import JobStatus
+from backend.crud.overlay import update_overlay_config
 from backend.models.overlay_config import OverlayConfig
 from celery.utils.log import get_task_logger
+from backend.crud.video_version import create_video_version
 
-
-logger = get_task_logger(__name__)  # For logging inside the task
+logger = get_task_logger(__name__)
 
 @shared_task
 def process_video_upload(video_id: int):
@@ -29,23 +27,21 @@ def trim_video(job_id: str, video_id: int, start: float, end: float):
     try:
         job = get_job_by_id(db, job_id)
         if not job:
-            return  # Should not happen
+            return
 
         update_job_status(db, job, JobStatus.processing)
 
-        # Get original video
         video = db.query(Video).filter(Video.id == video_id).first()
         if not video:
             update_job_status(db, job, JobStatus.failed)
             return
 
         input_path = f"/app/videos/{video.filename}"
-        trimmed_dir = "/app/videos/trimmed"
-        os.makedirs(trimmed_dir, exist_ok=True)
+        versions_dir = "/app/videos/versions"
+        os.makedirs(versions_dir, exist_ok=True)
         trimmed_filename = f"trimmed_{uuid.uuid4().hex}.mp4"
-        output_path = f"{trimmed_dir}/{trimmed_filename}"
+        output_path = f"{versions_dir}/{trimmed_filename}"
 
-        # Trim with ffmpeg
         result = subprocess.run(
             ["ffmpeg", "-i", input_path, "-ss", str(start), "-to", str(end), "-c", "copy", output_path],
             stdout=subprocess.PIPE,
@@ -54,7 +50,6 @@ def trim_video(job_id: str, video_id: int, start: float, end: float):
         if result.returncode != 0:
             raise Exception(f"FFmpeg error: {result.stdout.decode()}")
 
-        # Get duration and size of trimmed file
         duration_result = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", output_path],
             stdout=subprocess.PIPE,
@@ -63,18 +58,19 @@ def trim_video(job_id: str, video_id: int, start: float, end: float):
         duration = float(duration_result.stdout.decode().strip())
         size = os.path.getsize(output_path)
 
-        # Create trimmed video entry
+        # Create trimmed entry (existing)
         create_trimmed_video(db, video_id, trimmed_filename, start, end, duration, size)
 
-        # Update job
-        result_url = f"/videos/trimmed/{trimmed_filename}"
+        # Create video version
+        create_video_version(db, video_id=video_id, job_id=job_id, version_type="trimmed", filename=trimmed_filename, size=size, duration=duration)
+
+        result_url = f"/videos/versions/{trimmed_filename}"
         update_job_status(db, job, JobStatus.completed, result_url=result_url)
     except Exception as e:
         update_job_status(db, job, JobStatus.failed)
-        print(f"Task error: {str(e)}")  # For logging
+        print(f"Task error: {str(e)}")
     finally:
         db.close()
-
 
 @shared_task
 def apply_overlays(job_id: str, video_id: int):
@@ -91,20 +87,20 @@ def apply_overlays(job_id: str, video_id: int):
             raise Exception("Video not found")
 
         input_path = f"/app/videos/{video.filename}"
-        overlaid_dir = "/app/videos/overlaid"
-        os.makedirs(overlaid_dir, exist_ok=True)
+        versions_dir = "/app/videos/versions"
+        os.makedirs(versions_dir, exist_ok=True)
         output_filename = f"overlaid_{uuid.uuid4().hex}.mp4"
-        output_path = f"{overlaid_dir}/{output_filename}"
+        output_path = f"{versions_dir}/{output_filename}"
 
         # Prepare FFmpeg command
         cmd = ["ffmpeg"]
-        inputs = ["-i", input_path]  # Input 0: main video
+        inputs = ["-i", input_path]
         filter_complex = []
-        current_stream = "[0:v]"  # Start with main video stream
-        input_index = 1  # Next input index after main video
-        temp_files = []  # For text temp files
+        current_stream = "[0:v]"
+        input_index = 1
+        temp_files = []
 
-        # Text overlays (applied to current stream)
+        # Text overlays
         temp_idx = 0
         for text in config.get('text_overlays', []):
             with tempfile.NamedTemporaryFile(mode="w+", encoding="utf-8", delete=False) as temp_file:
@@ -142,11 +138,10 @@ def apply_overlays(job_id: str, video_id: int):
             current_stream = f"[vid{input_index}]"
             input_index += 1
 
-        # If there are filters, finalize with [outv] label
+        # Finalize filter_complex
         if filter_complex:
-            filter_complex.append(f"{current_stream} null [outv]")  # Final label for video
             filter_str = ";".join(filter_complex)
-            cmd += inputs + ["-filter_complex", filter_str, "-map", "[outv]", "-map", "0:a", "-c:v", "libx264", "-c:a", "copy", output_path]
+            cmd += inputs + ["-filter_complex", filter_str, "-map", current_stream, "-map", "0:a", "-c:v", "libx264", "-c:a", "copy", output_path]
         else:
             cmd += inputs + ["-c:v", "copy", "-c:a", "copy", output_path]
 
@@ -157,20 +152,29 @@ def apply_overlays(job_id: str, video_id: int):
             error_output = result.stderr + "\n" + result.stdout
             raise Exception(f"FFmpeg failed: {error_output}")
 
-        # Cleanup temp text files
+        # Cleanup temp files
         for temp_file in temp_files:
             os.remove(temp_file)
 
+        # Create video version
+        size = os.path.getsize(output_path)
+        duration_result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", output_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT
+        )
+        duration = float(duration_result.stdout.decode().strip())
+
+        create_video_version(db, video_id=video_id, job_id=job_id, version_type="overlaid", filename=output_filename, size=size, duration=duration)
+
         update_overlay_config(db, overlay, output_filename)
-        result_url = f"/videos/overlaid/{output_filename}"
+        result_url = f"/videos/versions/{output_filename}"
         update_job_status(db, job, JobStatus.completed, result_url=result_url)
     except Exception as e:
         update_job_status(db, job, JobStatus.failed, error_msg=str(e))
-        print(f"Task error: {str(e)}")  # For Celery logs
+        print(f"Task error: {str(e)}")
     finally:
         db.close()
-
-
 
 @shared_task
 def apply_watermark(job_id: str, video_id: int):
@@ -186,28 +190,48 @@ def apply_watermark(job_id: str, video_id: int):
         input_path = f"/app/videos/{video.filename}"
         logo_path = config['logo_path']
         opacity = config['opacity']
+        start = config['start']
+        end = config['end']
+        x = config['x']
+        y = config['y']
 
-        overlaid_dir = "/app/videos/overlaid"
-        os.makedirs(overlaid_dir, exist_ok=True)
+        versions_dir = "/app/videos/versions"
+        os.makedirs(versions_dir, exist_ok=True)
         output_filename = f"watermarked_{uuid.uuid4().hex}.mp4"
-        output_path = f"{overlaid_dir}/{output_filename}"
+        output_path = f"{versions_dir}/{output_filename}"
 
-        # FFmpeg command for watermark (bottom-right, semi-transparent)
+        # FFmpeg command: Scale logo to small size (max 100px width), apply opacity, position, and timing
+        enable = f"between(t,{start},{end})"
         cmd = [
             "ffmpeg", "-i", input_path, "-i", logo_path,
-            "-filter_complex", f"[1:v]format=yuva444p, colorchannelmixer=aa={opacity}[wm]; [0:v][wm]overlay=main_w-overlay_w-10:main_h-overlay_h-10",
-            "-c:v", "libx264", output_path
+            "-filter_complex", f"[1:v]scale=100:-1[scaled]; [scaled]format=yuva444p,colorchannelmixer=aa={opacity}[wm]; [0:v][wm]overlay={x}:{y}:enable='{enable}'",
+            "-c:v", "libx264", "-c:a", "copy", output_path
         ]
 
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        logger.info(f"Running FFmpeg command: {' '.join(cmd)}")
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            raise Exception(f"FFmpeg error: {result.stdout.decode()}")
+            error_output = result.stderr + "\n" + result.stdout
+            raise Exception(f"FFmpeg failed: {error_output}")
+
+        # Create video version
+        size = os.path.getsize(output_path)
+        duration_result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", output_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT
+        )
+        duration = float(duration_result.stdout.decode().strip())
+
+        create_video_version(db, video_id=video_id, job_id=job_id, version_type="watermarked", filename=output_filename, size=size, duration=duration)
 
         update_overlay_config(db, overlay, output_filename)
-        result_url = f"/videos/overlaid/{output_filename}"
+        result_url = f"/videos/versions/{output_filename}"
         update_job_status(db, job, JobStatus.completed, result_url=result_url)
     except Exception as e:
-        update_job_status(db, job, JobStatus.failed)
+        update_job_status(db, job, JobStatus.failed, error_msg=str(e))
         print(f"Error: {str(e)}")
     finally:
         db.close()
+

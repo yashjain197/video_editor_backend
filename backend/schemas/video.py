@@ -27,3 +27,12 @@ class TrimmedVideoList(BaseModel):
     duration: float | None
     size: int | None
     created_at: datetime
+
+class VideoVersionList(BaseModel):
+    id: int
+    version_type: str
+    quality: str
+    filename: str
+    size: int | None
+    duration: float | None
+    created_at: datetime

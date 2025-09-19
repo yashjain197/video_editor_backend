@@ -27,6 +27,8 @@ services:
     volumes:
       - ./videos:/app/videos
       - ./videos/overlaid:/app/videos/overlaid
+      - ./videos/versions:/app/videos/versions
+      - ./videos/watermarks:/app/videos/watermarks
     ports:
       - "8000:8000"
     depends_on:
@@ -42,6 +44,8 @@ services:
     volumes:
       - ./videos:/app/videos
       - ./videos/overlaid:/app/videos/overlaid
+      - ./videos/versions:/app/videos/versions
+      - ./videos/watermarks:/app/videos/watermarks
     depends_on:
       - redis
       - db
