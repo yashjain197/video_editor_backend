@@ -13,10 +13,12 @@ def create_job(db: Session):
 def get_job_by_id(db: Session, job_id: str):
     return db.query(Job).filter(Job.job_id == job_id).first()
 
-def update_job_status(db: Session, job: Job, status: JobStatus, result_url: str = None):
+def update_job_status(db: Session, job: Job, status: JobStatus, result_url: str = None, error_msg: str = None):
     job.status = status
     if result_url:
         job.result_url = result_url
+    if error_msg:
+        job.metadata_ = {"error": error_msg}
     db.commit()
     db.refresh(job)
     return job

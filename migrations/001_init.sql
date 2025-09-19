@@ -26,3 +26,11 @@ CREATE TABLE IF NOT EXISTS trimmed_videos (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS overlay_configs (
+    id SERIAL PRIMARY KEY,
+    job_id VARCHAR(36) REFERENCES jobs(job_id) NOT NULL,
+    video_id INTEGER REFERENCES videos(id) NOT NULL,
+    config JSONB NOT NULL,
+    output_filename VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

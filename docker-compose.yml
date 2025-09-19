@@ -26,6 +26,7 @@ services:
     env_file: .env
     volumes:
       - ./videos:/app/videos
+      - ./videos/overlaid:/app/videos/overlaid
     ports:
       - "8000:8000"
     depends_on:
@@ -40,6 +41,7 @@ services:
     env_file: .env
     volumes:
       - ./videos:/app/videos
+      - ./videos/overlaid:/app/videos/overlaid
     depends_on:
       - redis
       - db

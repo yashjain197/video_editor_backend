@@ -25,7 +25,8 @@ def get_job_status(job_id: str, db: Session = Depends(get_db)):
         job_id=job.job_id,
         status=job.status,
         result_url=job.result_url,
-        created_at=job.created_at
+        created_at=job.created_at,
+        metadata=job.metadata_
     )
 
 @router.get("/jobs/{job_id}/result")

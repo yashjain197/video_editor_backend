@@ -19,3 +19,10 @@ docker compose up --build
 - GET /api/v1/jobs/{job_id}/status: Check job status.
 - GET /api/v1/jobs/{job_id}/result: Download trimmed video if completed.
 - Trimmed files are in ./videos/trimmed.
+
+## Level 3 Implementation (Async Overlays & Watermark)
+- POST /api/v1/overlay: Queue overlays. Body example in testing below.
+- POST /api/v1/watermark: Queue watermark. Body: {"video_id": 1, "logo_path": "/videos/logo.png", "opacity": 0.5}.
+- Use /jobs/{job_id}/status and /result for tracking/download.
+- Supports Hindi text (e.g., "नमस्ते" in text overlay).
+- Overlaid files in ./videos/overlaid.
