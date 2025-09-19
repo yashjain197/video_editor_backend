@@ -2,7 +2,7 @@
 
 ## Quick start
 ```bash
-docker compose up --build
+docker-compose up --build
 ```
 
 ## Level 1 Implementation
