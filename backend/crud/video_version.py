@@ -19,8 +19,12 @@ def create_video_version(db: Session, video_id: int, job_id: str = None, version
 def get_versions_by_video(db: Session, video_id: int):
     return db.query(VideoVersion).filter(VideoVersion.video_id == video_id).all()
 
-def get_best_version(db: Session, video_id: int, version_type: str = None):
-    query = db.query(VideoVersion).filter(VideoVersion.video_id == video_id)
+def get_best_version(db: Session, video_id: int = None, version_type: str = None, job_id: str = None):
+    query = db.query(VideoVersion)
+    if video_id:
+        query = query.filter(VideoVersion.video_id == video_id)
     if version_type:
         query = query.filter(VideoVersion.version_type == version_type)
+    if job_id:
+        query = query.filter(VideoVersion.job_id == job_id)
     return query.order_by(VideoVersion.created_at.desc()).first()

@@ -6,5 +6,5 @@ class JobResponse(BaseModel):
     status: str
     result_url: str | None
     created_at: datetime
-    metadata: dict | None = None  # Added for errors
-
+    video_id: int | None  # Added
+    version_type: str | None  # Added (e.g., "trimmed", "watermarked")
